@@ -24,16 +24,18 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        playwright install chromium
 
     - name: 🚀 Run AI Test Framework
       env:
-        # This takes the encrypted secret from GitHub and gives it to Python!
-        API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        API_KEY: ${{ secrets.API_KEY }}
       run: |
         pytest tests/ --alluredir=allure-results
-        
-    - name: 📦 Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        playwright install chromium
+
+    - name: 📊 Save Test Evidence
+      if: always() # This forces GitHub to save the data even if tests fail!
+      uses: actions/upload-artifact@v4
+      with:
+        name: allure-results
+        path: allure-results
+        retention-days: 7
