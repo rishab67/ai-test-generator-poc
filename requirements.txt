@@ -4,3 +4,5 @@ requests==2.31.0
 python-dotenv==1.0.1
 pytest-html==4.1.1
 allure-pytest==2.13.5
+playwright
+pytest-playwright
