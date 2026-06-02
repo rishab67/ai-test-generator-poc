@@ -1,0 +1,5 @@
+
+Attempting to create pet for test: https://petstore.swagger.io/v2/pet
+Successfully created pet with ID: 9223372036854775807
+
+Executing positive test for URL: https://petstore.swagger.io/v2/pet/9223372036854775807/uploadImage

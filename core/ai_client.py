@@ -1,13 +1,36 @@
 import os
 from google import genai
-from pyee import cls
 
 
 class AITestGenerator:
     def __init__(self):
-        # This looks for the API_KEY variable in your environment
+        # 1. The Locksmith
         self.client = genai.Client(api_key=os.getenv("API_KEY"))
-        self.model_name = "gemini-2.5-flash-lite"
+
+        # 2. The Two Batteries (Added the missing comma!)
+        self.available_models = [
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash"
+        ]
+
+        self.current_index = 0
+
+        # 3. The Active Battery (Fixed the variable name!)
+        self.active_model = self.available_models[self.current_index]
+
+    def swap_model(self):
+        """The Switch: Flips between model 0 and model 1."""
+
+        # Removed the word 'Change' to make it valid Python syntax
+        if self.current_index == 0:
+            self.current_index = 1
+        else:
+            self.current_index = 0
+
+        self.active_model = self.available_models[self.current_index]
+
+        print(f"🔄 Swapped AI Model! Now using: {self.active_model}")
+        return self.active_model
 
     def generate_api_test(self, endpoint_path: str, schema_data: dict):
         prompt = f"""
@@ -23,12 +46,12 @@ class AITestGenerator:
 
         STRICT RULES:
         - The BASE_URL must be hardcoded as: "https://petstore.swagger.io/v2"
-        - Use the `requests` library (we will migrate to Playwright API later).
+        - Use the `requests` library.
         - Include rich Pytest assertions for status codes and response structures.
         - Do NOT output any explanations, markdown formatting, or conversational text. Return ONLY pure, executable Python code.
         """
         response = self.client.models.generate_content(
-            model=self.model_name,
+            model=self.active_model,
             contents=prompt,
         )
         return response.text

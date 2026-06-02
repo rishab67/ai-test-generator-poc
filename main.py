@@ -56,22 +56,19 @@ def main():
         # --- CHALLENGE 2: GENERATE THE TEST ---
         # Call the ai_engine.generate_api_test method here!
         # Pass in the endpoint_path and the schema_data.
-        try:
-            generated_code = ai_engine.generate_api_test(
-                endpoint_path=endpoint_path,
-                schema_data=schema_data
-            )
-        except Exception as e:
-            # If google blocks us, we catch the error, wait for 20 seconds, and retry!
-            print(f"Rate Limit hit! Pausing for the 20 seconds before trying...")
-            time.sleep(20)
+        while True:
+            try:
+                generated_code = ai_engine.generate_api_test(
+                    endpoint_path=endpoint_path,
+                    schema_data=schema_data
+                )
+                break # Success!!! We break out of the infinite loop and move on.
+            except Exception as e:
+                # If google blocks us, we catch the error, wait for 05 seconds, and retry!
+                print(f"⚠️ RATE LIMIT HIT! Flipping the battery switch...")
+                ai_engine.swap_model()
+                time.sleep(5)
 
-
-            # Retry the exact same request
-            generated_code = ai_engine.generate_api_test(
-                endpoint_path =endpoint_path,
-                schema_data=schema_data
-            )
 
         # --- CHALLENGE 3: SAVE THE TEST ---
         # Call your save_generated_test function here!

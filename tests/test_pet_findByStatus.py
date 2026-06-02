@@ -1,219 +1,175 @@
 import pytest
 import requests
-from requests.exceptions import ConnectionError, Timeout, RequestException
+import json
+from urllib.parse import urlencode
 
+# Base URL for the Petstore API
 BASE_URL = "https://petstore.swagger.io/v2"
+ENDPOINT = "/pet/findByStatus"
 
-# Helper function to create a pet for testing purposes
-def create_pet(pet_data):
-    try:
-        response = requests.post(f"{BASE_URL}/pet", json=pet_data, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Failed to create pet: {e}")
-        return None
-
-# Helper function to delete a pet
-def delete_pet(pet_id):
-    try:
-        response = requests.delete(f"{BASE_URL}/pet/{pet_id}", timeout=10)
-        if response.status_code not in [200, 404]: # Allow 404 if pet doesn't exist
-            response.raise_for_status()
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Failed to delete pet: {e}")
-
-# Define a fixture for a sample pet
+# Define a fixture for the base URL to make tests cleaner
 @pytest.fixture(scope="module")
-def sample_pet():
-    pet_data = {
-        "id": 123456789,
-        "name": "Buddy",
-        "category": {"id": 1, "name": "Dogs"},
-        "photoUrls": ["string"],
-        "tags": [{"id": 1, "name": "friendly"}],
-        "status": "available"
-    }
-    created_pet = create_pet(pet_data)
-    if created_pet:
-        yield created_pet
-        delete_pet(created_pet.get("id"))
-    else:
-        pytest.skip("Could not create a sample pet for testing.")
+def api_base_url():
+    return BASE_URL
+
+# Helper function to validate basic Pet structure (assuming common properties)
+def validate_pet_structure(pet_data):
+    assert isinstance(pet_data, dict)
+    assert "id" in pet_data and isinstance(pet_data["id"], (int, float)) # ID can sometimes be float for legacy reasons
+    assert "name" in pet_data and isinstance(pet_data["name"], str)
+    assert "status" in pet_data and isinstance(pet_data["status"], str)
+    assert pet_data["status"] in ["available", "pending", "sold"]
+
+# --- Test Cases ---
 
 # 1. [Positive] 200 OK with a perfect, complete payload.
-def test_find_pets_by_status_positive_perfect_payload(sample_pet):
-    if not sample_pet:
-        pytest.skip("Skipping test due to sample_pet fixture failure.")
+@pytest.mark.parametrize("status_param", [
+    ("available",),
+    ("pending",),
+    ("sold",),
+    ("available", "pending"), # Test with multiple statuses
+    ("available", "sold", "pending") # Test with all statuses
+])
+def test_find_pets_by_status_positive_200_ok(api_base_url, status_param):
+    """
+    Test finding pets by a valid status (or multiple statuses) successfully.
+    Verifies 200 OK and the structure of returned pet objects.
+    """
+    url = f"{api_base_url}{ENDPOINT}"
+    
+    # OpenAPI schema specifies 'collectionFormat: multi' for query array,
+    # meaning 'status=available&status=pending'
+    params = urlencode([("status", s) for s in status_param], doseq=True)
+    full_url = f"{url}?{params}"
 
-    status_to_find = sample_pet.get("status", "available")
-    params = {'status': status_to_find}
-    headers = {'Accept': 'application/json'}
+    response = requests.get(full_url)
 
-    try:
-        response = requests.get(f"{BASE_URL}/pet/findByStatus", params=params, headers=headers, timeout=10)
-        assert response.status_code == 200
-        response_json = response.json()
-        assert isinstance(response_json, list)
-        # Check if the created pet is in the response
-        found_pet = any(pet.get("id") == sample_pet.get("id") for pet in response_json)
-        assert found_pet, f"Sample pet with ID {sample_pet.get('id')} not found in the results for status '{status_to_find}'"
-        # Further assertions on the structure of pets in the response if needed
-        if response_json:
-            assert isinstance(response_json[0], dict)
-            assert "id" in response_json[0]
-            assert "name" in response_json[0]
-            assert "status" in response_json[0]
+    assert response.status_code == 200, \
+        f"Expected status code 200, but got {response.status_code}. Response: {response.text}"
+    
+    response_data = response.json()
+    assert isinstance(response_data, list), "Response data should be a list of pets."
 
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Request failed: {e}")
-    except ValueError:
-        pytest.fail("Response is not valid JSON.")
+    if response_data: # If pets are returned, validate their structure
+        for pet in response_data:
+            validate_pet_structure(pet)
+            # Ensure the returned pet's status is one of the requested statuses
+            assert pet["status"] in status_param, \
+                f"Pet with status '{pet['status']}' found, but only '{status_param}' were requested."
+    else:
+        # It's okay to get an empty list if no pets match the status
+        pass
 
-# 2. [Negative] 400/405 Invalid input (missing required fields).
-# The 'status' parameter is marked as 'required': True in the schema.
-def test_find_pets_by_status_negative_missing_required_field():
-    params = {}  # Missing the required 'status' parameter
-    headers = {'Accept': 'application/json'}
+# 2. [Negative] 400 Invalid input (missing required fields).
+def test_find_pets_by_status_negative_400_missing_status(api_base_url):
+    """
+    Test sending a request without the required 'status' query parameter.
+    Expects a 400 Bad Request error.
+    """
+    url = f"{api_base_url}{ENDPOINT}"
+    
+    # Do not provide the 'status' parameter
+    response = requests.get(url)
 
-    try:
-        response = requests.get(f"{BASE_URL}/pet/findByStatus", params=params, headers=headers, timeout=10)
-        # According to the schema, invalid status should result in 400.
-        # However, missing a required query parameter can sometimes lead to 405 or other errors depending on server implementation.
-        # We'll assert for a client error code indicating invalid request.
-        assert response.status_code in [400, 405], f"Expected 400 or 405, but got {response.status_code}"
-        assert "Invalid status value" in response.text or "Missing required parameter" in response.text
+    assert response.status_code == 400, \
+        f"Expected status code 400 for missing 'status' parameter, but got {response.status_code}. Response: {response.text}"
+    assert "Invalid status value" in response.text or "message" in response.json(), \
+        "Response message should indicate invalid/missing status."
 
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Request failed: {e}")
+# 3. [Negative] 400 Boundary testing (e.g., sending an integer when a string is expected, or an empty string).
+@pytest.mark.parametrize("invalid_status_param", [
+    ("invalid_status_string",),
+    ("123",), # Integer as string, but not in enum
+    ("AVAILABLE",), # Case sensitivity (enum is lowercase)
+    ("",), # Empty string
+    ("available", "invalid_status"), # Mixed valid and invalid
+    ("available", ""), # Mixed valid and empty
+    (None,), # None, though requests usually converts to 'None' string
+])
+def test_find_pets_by_status_negative_400_invalid_status_values(api_base_url, invalid_status_param):
+    """
+    Test finding pets by an invalid or non-enum status value.
+    Expects a 400 Bad Request error.
+    """
+    url = f"{api_base_url}{ENDPOINT}"
+    
+    # OpenAPI schema specifies 'collectionFormat: multi' for query array,
+    # meaning 'status=invalid_status_string' or 'status=available&status=invalid_status'
+    params = urlencode([("status", str(s)) for s in invalid_status_param if s is not None], doseq=True)
+    
+    # Handle the case where invalid_status_param is (None,) leading to empty params
+    if not params:
+        full_url = url # Simulates missing parameter which is handled by a different test
+        response = requests.get(full_url)
+        assert response.status_code == 400, \
+            f"Expected 400 for invalid/missing status, got {response.status_code} for {invalid_status_param}. Response: {response.text}"
+    else:
+        full_url = f"{url}?{params}"
+        response = requests.get(full_url)
 
-# 3. [Negative] 400/405 Boundary testing (e.g., sending an integer when a string is expected, or an empty string).
-def test_find_pets_by_status_negative_invalid_status_type():
-    params = {'status': 123}  # Sending an integer instead of a string
-    headers = {'Accept': 'application/json'}
+        assert response.status_code == 400, \
+            f"Expected status code 400 for invalid status '{invalid_status_param}', but got {response.status_code}. Response: {response.text}"
+        assert "Invalid status value" in response.text or "message" in response.json(), \
+            "Response message should indicate invalid status."
 
-    try:
-        response = requests.get(f"{BASE_URL}/pet/findByStatus", params=params, headers=headers, timeout=10)
-        assert response.status_code == 400, f"Expected 400, but got {response.status_code}"
-        assert "Invalid status value" in response.text
-
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Request failed: {e}")
-    except ValueError:
-        pytest.fail("Response is not valid JSON.")
-
-def test_find_pets_by_status_negative_invalid_status_enum_value():
-    params = {'status': 'nonexistent'}  # Sending a status not in the enum
-    headers = {'Accept': 'application/json'}
-
-    try:
-        response = requests.get(f"{BASE_URL}/pet/findByStatus", params=params, headers=headers, timeout=10)
-        assert response.status_code == 400, f"Expected 400, but got {response.status_code}"
-        assert "Invalid status value" in response.text
-
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Request failed: {e}")
-    except ValueError:
-        pytest.fail("Response is not valid JSON.")
-
-def test_find_pets_by_status_negative_empty_status_string():
-    params = {'status': ''}  # Sending an empty string for status
-    headers = {'Accept': 'application/json'}
-
-    try:
-        response = requests.get(f"{BASE_URL}/pet/findByStatus", params=params, headers=headers, timeout=10)
-        # An empty string is not a valid enum value.
-        assert response.status_code == 400, f"Expected 400, but got {response.status_code}"
-        assert "Invalid status value" in response.text
-
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Request failed: {e}")
-    except ValueError:
-        pytest.fail("Response is not valid JSON.")
-
-def test_find_pets_by_status_negative_multiple_invalid_statuses():
-    params = {'status': ['available', 'invalid_status', 'pending']}  # One invalid status in a list
-    headers = {'Accept': 'application/json'}
-
-    try:
-        response = requests.get(f"{BASE_URL}/pet/findByStatus", params=params, headers=headers, timeout=10)
-        # If one of the statuses is invalid, the entire request might be considered invalid.
-        assert response.status_code == 400, f"Expected 400, but got {response.status_code}"
-        assert "Invalid status value" in response.text
-
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Request failed: {e}")
-    except ValueError:
-        pytest.fail("Response is not valid JSON.")
 
 # 4. [Security] 401/403 Unauthorized (simulate missing or invalid authentication headers if applicable).
-# The schema indicates 'petstore_auth' with 'write:pets', 'read:pets' scopes.
-# For a GET request like findPetsByStatus, 'read:pets' is usually sufficient.
-# We will simulate missing authentication.
-def test_find_pets_by_status_security_unauthorized_no_auth():
-    params = {'status': 'available'}
-    # No authorization header provided
+def test_find_pets_by_status_security_unauthorized(api_base_url):
+    """
+    Test accessing the endpoint without authentication headers, as the schema
+    specifies 'petstore_auth' security.
+    Expects 401 Unauthorized or 403 Forbidden, indicating security enforcement.
+    Note: The public Petstore API often allows unauthenticated read access,
+    which would be a finding if a 401/403 is expected based on schema.
+    For this test, we assert the *desired secure* behavior.
+    """
+    url = f"{api_base_url}{ENDPOINT}?status=available"
+    
+    # Simulate missing authentication by not providing any Authorization header
+    headers = {} 
+    
+    response = requests.get(url, headers=headers)
 
-    try:
-        response = requests.get(f"{BASE_URL}/pet/findByStatus", params=params, timeout=10)
-        # For secured endpoints without auth, typically 401 Unauthorized is returned.
-        assert response.status_code == 401, f"Expected 401, but got {response.status_code}"
+    # The actual Petstore API public instance *does* allow unauthenticated access for GET /findByStatus.
+    # Therefore, asserting 401/403 will likely fail against the public API.
+    # As a security tester, I would document this as a finding:
+    # "Endpoint /pet/findByStatus, despite declaring 'petstore_auth' security with 'read:pets' scope,
+    # allows unauthenticated access (returns 200 OK)."
+    # However, to strictly adhere to the prompt's implied security expectation (401/403),
+    # I will assert for 401 or 403.
+    # If this test runs against a real API, the discrepancy indicates a security testing finding.
 
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Request failed: {e}")
+    assert response.status_code in [401, 403], \
+        f"Expected status code 401 or 403 for unauthorized access, but got {response.status_code}. " \
+        f"This might indicate that the API allows unauthenticated access despite security requirements. Response: {response.text}"
+    
+    if response.status_code == 401:
+        assert "Unauthorized" in response.text or "message" in response.json(), \
+            "Response message should indicate unauthorized access."
+    elif response.status_code == 403:
+        assert "Forbidden" in response.text or "message" in response.json(), \
+            "Response message should indicate forbidden access."
 
-# Note: To test invalid/expired tokens (403), you would need to obtain a valid token
-# and then either expire it or use a token with insufficient scopes.
-# This is more complex to automate without an actual auth server setup.
-# The test below simulates an invalid token format, which might result in 401 or 403 depending on implementation.
-def test_find_pets_by_status_security_unauthorized_invalid_token():
-    params = {'status': 'available'}
-    headers = {'Accept': 'application/json', 'Authorization': 'Bearer invalid_token_format'}
+def test_find_pets_by_status_security_invalid_token(api_base_url):
+    """
+    Test accessing the endpoint with an invalid authentication token.
+    Expects 401 Unauthorized or 403 Forbidden.
+    """
+    url = f"{api_base_url}{ENDPOINT}?status=available"
+    
+    # Simulate an invalid authentication token
+    invalid_token = "Bearer invalid_jwt_token_12345"
+    headers = {"Authorization": invalid_token}
+    
+    response = requests.get(url, headers=headers)
 
-    try:
-        response = requests.get(f"{BASE_URL}/pet/findByStatus", params=params, headers=headers, timeout=10)
-        # Depending on the server's authentication middleware, this could be 401 or 403.
-        # We'll assert for a client error code.
-        assert response.status_code in [401, 403], f"Expected 401 or 403, but got {response.status_code}"
-
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Request failed: {e}")
-
-# Test with multiple statuses
-def test_find_pets_by_status_multiple_valid_statuses():
-    # To make this test reliable, we'd ideally create pets with different statuses.
-    # For simplicity, we'll just test with valid enum values.
-    params = {'status': ['available', 'pending']}
-    headers = {'Accept': 'application/json'}
-
-    try:
-        response = requests.get(f"{BASE_URL}/pet/findByStatus", params=params, headers=headers, timeout=10)
-        assert response.status_code == 200
-        response_json = response.json()
-        assert isinstance(response_json, list)
-        if response_json:
-            # Check if all returned pets have a status that is either 'available' or 'pending'
-            for pet in response_json:
-                assert pet.get("status") in ['available', 'pending'], f"Found pet with unexpected status: {pet.get('status')}"
-
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Request failed: {e}")
-    except ValueError:
-        pytest.fail("Response is not valid JSON.")
-
-# Test with Accept header for XML (as per schema 'produces': ['application/json', 'application/xml'])
-def test_find_pets_by_status_accept_xml():
-    params = {'status': 'available'}
-    headers = {'Accept': 'application/xml'}
-
-    try:
-        response = requests.get(f"{BASE_URL}/pet/findByStatus", params=params, headers=headers, timeout=10)
-        assert response.status_code == 200
-        assert 'application/xml' in response.headers.get('Content-Type', '')
-        # Asserting the XML structure is more complex and might involve libraries like xmltodict or lxml.
-        # For now, we'll just check if it looks like XML and contains a common element.
-        assert response.text.strip().startswith('<')
-        assert '<Pet>' in response.text or '<pet>' in response.text # Example tag, adjust if schema defines differently
-
-    except (ConnectionError, Timeout, RequestException) as e:
-        pytest.fail(f"Request failed: {e}")
+    assert response.status_code in [401, 403], \
+        f"Expected status code 401 or 403 for invalid token, but got {response.status_code}. " \
+        f"This might indicate weak security validation. Response: {response.text}"
+    
+    if response.status_code == 401:
+        assert "Unauthorized" in response.text or "message" in response.json(), \
+            "Response message should indicate unauthorized access for invalid token."
+    elif response.status_code == 403:
+        assert "Forbidden" in response.text or "message" in response.json(), \
+            "Response message should indicate forbidden access for invalid token."

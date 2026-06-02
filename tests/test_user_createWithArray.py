@@ -1,143 +1,151 @@
-import pytest
 import requests
+import pytest
+import uuid
 
 BASE_URL = "https://petstore.swagger.io/v2"
+ENDPOINT = "/user/createWithArray"
+URL = f"{BASE_URL}{ENDPOINT}"
 
-@pytest.fixture
-def user_payload():
-    return [
-        {
-            "id": 101,
-            "username": "testuser1",
-            "firstName": "Test",
-            "lastName": "UserOne",
-            "email": "testuser1@example.com",
-            "password": "password123",
-            "phone": "123-456-7890",
-            "userStatus": 1
-        },
-        {
-            "id": 102,
-            "username": "testuser2",
-            "firstName": "Test",
-            "lastName": "UserTwo",
-            "email": "testuser2@example.com",
-            "password": "password456",
-            "phone": "098-765-4321",
-            "userStatus": 0
-        }
-    ]
-
-def test_create_users_with_array_success(user_payload):
-    headers = {'Content-Type': 'application/json'}
-    response = requests.post(f"{BASE_URL}/user/createWithArray", json=user_payload, headers=headers)
-    assert response.status_code == 200
-
-def test_create_users_with_array_empty_payload():
-    headers = {'Content-Type': 'application/json'}
-    response = requests.post(f"{BASE_URL}/user/createWithArray", json=[], headers=headers)
-    assert response.status_code == 200
-
-def test_create_users_with_array_invalid_payload_type():
-    headers = {'Content-Type': 'application/json'}
-    invalid_payload = {"user": "not_an_array"}
-    response = requests.post(f"{BASE_URL}/user/createWithArray", json=invalid_payload, headers=headers)
-    assert response.status_code != 200 # Expecting a client error for invalid payload structure
-
-def test_create_users_with_array_missing_required_fields():
-    headers = {'Content-Type': 'application/json'}
-    payload_missing_id = [
-        {
-            "username": "testuser_no_id",
-            "firstName": "Test",
-            "lastName": "NoID",
-            "email": "testnouser@example.com",
-            "password": "passwordabc",
-            "phone": "555-555-5555",
-            "userStatus": 1
-        }
-    ]
-    response = requests.post(f"{BASE_URL}/user/createWithArray", json=payload_missing_id, headers=headers)
-    assert response.status_code != 200 # Expecting a client error if 'id' is truly mandatory for creation in the backend
-
-def test_create_users_with_array_duplicate_user_id():
-    headers = {'Content-Type': 'application/json'}
-    payload_duplicate_id = [
-        {
-            "id": 200,
-            "username": "duplicate_id_user1",
-            "firstName": "Dup",
-            "lastName": "One",
-            "email": "dup1@example.com",
-            "password": "pwd1",
-            "phone": "111-111-1111",
-            "userStatus": 1
-        },
-        {
-            "id": 200,
-            "username": "duplicate_id_user2",
-            "firstName": "Dup",
-            "lastName": "Two",
-            "email": "dup2@example.com",
-            "password": "pwd2",
-            "phone": "222-222-2222",
-            "userStatus": 1
-        }
-    ]
-    response = requests.post(f"{BASE_URL}/user/createWithArray", json=payload_duplicate_id, headers=headers)
-    # The behavior for duplicate IDs in an array creation is often implementation-specific.
-    # It might create the first one and error on the second, or error entirely.
-    # We'll assert it's not a success code if the backend enforces uniqueness.
-    assert response.status_code != 200
-
-def test_create_users_with_array_with_existing_user():
-    # First, create a user to ensure it exists
-    user_to_pre_create = {
-        "id": 300,
-        "username": "pre_existing_user",
-        "firstName": "Pre",
-        "lastName": "Existing",
-        "email": "pre@example.com",
-        "password": "password_pre",
-        "phone": "333-333-3333",
+def create_valid_user_payload(index=1):
+    unique_suffix = uuid.uuid4().hex[:8]
+    return {
+        "id": index,
+        "username": f"testuser_{unique_suffix}_{index}",
+        "firstName": f"FirstName_{index}",
+        "lastName": f"LastName_{index}",
+        "email": f"user{index}@{unique_suffix}.com",
+        "password": f"password{index}",
+        "phone": f"123-456-789{index}",
         "userStatus": 1
     }
-    headers = {'Content-Type': 'application/json'}
-    create_response = requests.post(f"{BASE_URL}/user", json=user_to_pre_create, headers=headers)
-    assert create_response.status_code == 200
 
-    # Now try to create a list including the pre-existing user and a new one
-    payload_with_existing = [
-        user_to_pre_create, # This user already exists
-        {
-            "id": 301,
-            "username": "new_user_in_array",
-            "firstName": "New",
-            "lastName": "InArray",
-            "email": "newinarray@example.com",
-            "password": "password_new",
-            "phone": "444-444-4444",
-            "userStatus": 0
-        }
-    ]
-    response = requests.post(f"{BASE_URL}/user/createWithArray", json=payload_with_existing, headers=headers)
-    # Again, the behavior is implementation-dependent. It might update, ignore, or error.
-    # A strict interpretation might expect an error if the primary key constraint is violated.
-    assert response.status_code != 200 # Assuming the backend enforces uniqueness and rejects duplicates.
+class TestCreateUsersWithArray:
 
-def test_create_users_with_array_large_payload():
-    headers = {'Content-Type': 'application/json'}
-    large_payload = []
-    for i in range(100):
-        large_payload.append({
-            "id": 400 + i,
-            "username": f"largeuser_{i}",
-            "firstName": "Large",
-            "lastName": f"User_{i}",
-            "email": f"largeuser{i}@example.com",
-            "password": f"pwd_large_{i}",
-            "phone": f"555-{i:03d}-5555",
-            "userStatus": i % 2
-        })
-    response = requests.post(f"{BASE_URL}/user/createWithArray", json=large_payload, headers=headers)
-    assert response.status_code == 200
+    def test_create_users_200_ok_complete_payload(self):
+        """
+        [Positive] Tests creating a list of users with a complete and valid payload,
+        expecting a 200 OK status code.
+        """
+        users_payload = [
+            create_valid_user_payload(1),
+            create_valid_user_payload(2)
+        ]
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(URL, json=users_payload, headers=headers)
+
+        assert response.status_code == 200, f"Expected Status Code 200, got {response.status_code}. Response: {response.text}"
+        assert "successful operation" in response.text or response.text == "", \
+            f"Expected 'successful operation' or empty response, got: {response.text}"
+
+    @pytest.mark.parametrize("missing_field_user_payload", [
+        # Missing 'username'
+        ([{
+            "id": 101,
+            "firstName": "MissingUser",
+            "lastName": "Field",
+            "email": "missing@example.com",
+            "password": "password123",
+            "phone": "111-222-3333",
+            "userStatus": 1
+        }]),
+        # Missing 'id'
+        ([{
+            "username": "no_id_user",
+            "firstName": "NoId",
+            "lastName": "User",
+            "email": "noid@example.com",
+            "password": "password123",
+            "phone": "111-222-3333",
+            "userStatus": 1
+        }]),
+        # Sending an empty user object
+        ([{}]),
+        # Sending a list with one valid and one invalid user
+        ([create_valid_user_payload(3), {}]),
+    ])
+    def test_create_users_400_missing_required_fields(self, missing_field_user_payload):
+        """
+        [Negative] Tests creating users with payloads missing assumed 'required' fields,
+        expecting a 400 Bad Request status.
+        """
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(URL, json=missing_field_user_payload, headers=headers)
+
+        assert response.status_code == 400, \
+            f"Expected Status Code 400, got {response.status_code}. Response: {response.text}"
+        assert "bad input" in response.text.lower() or "error" in response.text.lower() or "invalid" in response.text.lower(), \
+            f"Expected error message for 400, got: {response.text}"
+
+    @pytest.mark.parametrize("invalid_payload", [
+        # Sending an integer instead of a string for username
+        ([{
+            "id": 1,
+            "username": 12345,
+            "firstName": "Boundary", "lastName": "Test", "email": "bt@example.com",
+            "password": "pass", "phone": "123", "userStatus": 1
+        }]),
+        # Sending an empty string for username
+        ([{
+            "id": 2,
+            "username": "",
+            "firstName": "Boundary", "lastName": "Test", "email": "bt2@example.com",
+            "password": "pass", "phone": "123", "userStatus": 1
+        }]),
+        # Sending a non-array payload (e.g., a single user object directly)
+        (create_valid_user_payload(4)),
+        # Sending an empty list (functionally invalid for "create" operation)
+        ([]),
+        # Sending a list with a non-object element
+        ([create_valid_user_payload(5), "not_an_object"]),
+    ])
+    def test_create_users_400_boundary_invalid_data_types_and_formats(self, invalid_payload):
+        """
+        [Negative] Tests boundary conditions and invalid data types/formats,
+        expecting a 400 Bad Request.
+        """
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(URL, json=invalid_payload, headers=headers)
+
+        assert response.status_code == 400, \
+            f"Expected Status Code 400, got {response.status_code}. Response: {response.text}"
+        assert "bad input" in response.text.lower() or "error" in response.text.lower() or "invalid" in response.text.lower() or "syntax" in response.text.lower(), \
+            f"Expected error message for 400, got: {response.text}"
+
+    def test_create_users_400_non_json_payload(self):
+        """
+        [Negative] Tests sending a non-JSON payload, expecting a 400 Bad Request.
+        """
+        headers = {"Content-Type": "text/plain"}
+        response = requests.post(URL, data="this is not json", headers=headers)
+
+        assert response.status_code == 400, \
+            f"Expected Status Code 400, got {response.status_code}. Response: {response.text}"
+        assert "bad input" in response.text.lower() or "error" in response.text.lower() or "invalid" in response.text.lower() or "syntax" in response.text.lower(), \
+            f"Expected error message for 400, got: {response.text}"
+
+
+    @pytest.mark.parametrize("auth_headers", [
+        # No authentication headers
+        ({}),
+        # Invalid Bearer Token
+        ({"Authorization": "Bearer invalid_token_123"}),
+        # Invalid Basic Auth
+        ({"Authorization": "Basic YWRtaW46aW52YWxpZFBhc3N3b3Jk"}),
+    ])
+    def test_create_users_security_unauthorized_access_simulation(self, auth_headers):
+        """
+        [Security] Simulates unauthorized access attempts with missing or invalid authentication headers.
+        As a security best practice, protected endpoints should return 401 Unauthorized or 403 Forbidden.
+        This test asserts for that expected security behavior.
+        """
+        users_payload = [create_valid_user_payload(10)]
+        headers = {"Content-Type": "application/json"}
+        headers.update(auth_headers)
+
+        response = requests.post(URL, json=users_payload, headers=headers)
+
+        assert response.status_code in [401, 403], \
+            f"Expected Status Code 401 or 403 for unauthorized access simulation, " \
+            f"but got {response.status_code}. If the API returned 200, this indicates " \
+            f"a potential security flaw where an endpoint that should be protected is not. " \
+            f"Response: {response.text}"

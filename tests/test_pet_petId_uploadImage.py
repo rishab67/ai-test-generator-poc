@@ -1,246 +1,219 @@
 import pytest
 import requests
-from typing import Dict, Any
+import os
+import json
 
 BASE_URL = "https://petstore.swagger.io/v2"
-API_KEY = "special-key"  # Example API key, assuming some authentication mechanism
 
-def test_upload_image_positive_200_ok():
+# --- Fixtures for Setup and Teardown ---
+
+@pytest.fixture(scope="module")
+def api_key_header():
     """
-    [Positive] Test case for uploading an image with a valid pet ID and file.
+    Provides a valid API key header for authentication.
+    For the Petstore API, a common pattern for 'petstore_auth' is to use
+    an 'api_key' in the header. The exact value might vary, but for demo,
+    'special-key' or any non-empty string often works.
     """
-    # First, create a pet to get a valid petId
-    pet_data = {
-        "category": {"id": 1, "name": "Dogs"},
-        "name": "Buddy",
-        "photoUrls": ["http://example.com/buddy.jpg"],
-        "tags": [{"id": 1, "name": "cute"}],
+    return {"api_key": "special-key"}
+
+@pytest.fixture(scope="module")
+def invalid_api_key_header():
+    """Provides an invalid API key header for security tests."""
+    return {"api_key": "invalid-security-token-12345"}
+
+@pytest.fixture(scope="module")
+def pet_id(api_key_header):
+    """
+    Fixture to create a pet before tests run and delete it afterwards.
+    This ensures a valid and dynamic petId for the uploadImage tests.
+    Returns the created pet's ID.
+    """
+    # 1. Create a pet
+    create_pet_url = f"{BASE_URL}/pet"
+    pet_payload = {
+        "id": 0,  # The API will typically assign a new ID if 0 or omitted
+        "category": {"id": 1, "name": "dogs"},
+        "name": "doggie_for_upload_test",
+        "photoUrls": ["http://example.com/photo.jpg"],
+        "tags": [{"id": 10, "name": "test-tag"}],
         "status": "available"
     }
-    create_pet_response = requests.post(f"{BASE_URL}/pet", json=pet_data)
-    assert create_pet_response.status_code == 200
-    pet_id = create_pet_response.json().get("id")
-    assert pet_id is not None
 
-    # Prepare the image file
-    image_file_path = "test_image.jpg"  # Replace with a path to a real image file
-    try:
-        with open(image_file_path, "wb") as f:
-            f.write(b"This is a dummy image file content.")
-    except IOError:
-        pytest.skip(f"Could not create dummy image file at {image_file_path}. Skipping test.")
+    # Pet creation endpoint expects application/json
+    headers = {"Content-Type": "application/json"}
+    headers.update(api_key_header)  # Add API key for creation
 
-    files = {'file': (image_file_path, open(image_file_path, 'rb'), 'image/jpeg')}
-    data = {'additionalMetadata': 'This is a test image'}
+    print(f"\nAttempting to create pet for test: {create_pet_url}")
+    response = requests.post(create_pet_url, headers=headers, json=pet_payload)
+    assert response.status_code == 200, f"Failed to create pet. Status: {response.status_code}, Response: {response.text}"
+    
+    created_pet_id = response.json()['id']
+    print(f"Successfully created pet with ID: {created_pet_id}")
 
-    headers = {
-        "api_key": API_KEY
-    }
+    yield created_pet_id  # Provide the pet ID to the tests
 
-    response = requests.post(
-        f"{BASE_URL}/pet/{pet_id}/uploadImage",
-        files=files,
-        data=data,
-        headers=headers
-    )
+    # 2. Delete the pet after tests complete
+    delete_pet_url = f"{BASE_URL}/pet/{created_pet_id}"
+    delete_headers = api_key_header  # Use the same API key for deletion
 
-    assert response.status_code == 200
-    response_data = response.json()
-    assert isinstance(response_data, dict)
-    assert "code" in response_data
-    assert "type" in response_data
-    assert "message" in response_data
-    assert response_data["code"] == 200
-    assert response_data["type"] == "unknown"  # Or whatever the expected type is for success
+    print(f"Attempting to delete pet after tests: {delete_pet_url}")
+    delete_response = requests.delete(delete_pet_url, headers=delete_headers)
+    assert delete_response.status_code == 200, f"Failed to delete pet {created_pet_id}. Status: {delete_response.status_code}, Response: {delete_response.text}"
+    print(f"Successfully deleted pet with ID: {created_pet_id}")
 
-    # Clean up the created pet
-    delete_response = requests.delete(f"{BASE_URL}/pet/{pet_id}", headers=headers)
-    assert delete_response.status_code == 200
 
-def test_upload_image_negative_invalid_input_missing_fields():
+# --- Test Cases ---
+
+def test_upload_image_positive_200_ok(pet_id, api_key_header):
     """
-    [Negative] Test case for invalid input, specifically missing required fields (petId).
+    [Positive] 200 OK with a perfect, complete payload.
+    Uploads an image with additional metadata for a valid pet using multipart/form-data.
     """
-    # Intentionally not providing a petId in the URL, which is a required path parameter
-    files = {'file': ('test_image.jpg', b'dummy content', 'image/jpeg')}
-    data = {'additionalMetadata': 'This is a test image'}
+    endpoint = f"/pet/{pet_id}/uploadImage"
+    url = f"{BASE_URL}{endpoint}"
 
-    headers = {
-        "api_key": API_KEY
-    }
+    # Prepare multipart/form-data payload
+    additional_metadata = "Comprehensive test photo upload from Pytest script."
+    file_content = b"This is a dummy binary image content for testing purposes.\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0cIDATx\xda\xed\xc1\x01\x01\x00\x00\x00\xc2\xa0\xf7Om\x00\x00\x00\x00IEND\xaeB`\x82"
+    file_name = "test_image_full.png"
+    file_mimetype = "image/png"
 
-    response = requests.post(
-        f"{BASE_URL}/pet/uploadImage",  # Missing petId
-        files=files,
-        data=data,
-        headers=headers
-    )
+    # `files` parameter in requests automatically sets Content-Type to multipart/form-data
+    # and handles file encoding.
+    files = {'file': (file_name, file_content, file_mimetype)}
+    data = {'additionalMetadata': additional_metadata}
 
-    # The API might return 404 if the route is not found, or 400/405 if path parameter is missing.
-    # Based on Swagger, the path parameter is required, so a missing one should be a client error.
-    assert response.status_code in [400, 404, 405]
+    headers = api_key_header  # Include API key header for authentication
 
-def test_upload_image_negative_boundary_testing_invalid_types():
+    print(f"\nExecuting positive test for URL: {url}")
+    response = requests.post(url, headers=headers, files=files, data=data)
+
+    assert response.status_code == 200, f"Expected status code 200, but got {response.status_code}. Response: {response.text}"
+    response_json = response.json()
+    assert isinstance(response_json, dict)
+    assert "code" in response_json, "Response JSON missing 'code' field."
+    assert "type" in response_json, "Response JSON missing 'type' field."
+    assert "message" in response_json, "Response JSON missing 'message' field."
+    assert response_json["code"] == 200, f"Expected code 200, got {response_json['code']}."
+    assert "uploaded" in response_json["message"], "Response message should indicate successful upload."
+    assert file_name in response_json["message"], f"Response message should contain uploaded file name '{file_name}'."
+    assert additional_metadata in response_json["message"], f"Response message should contain additional metadata '{additional_metadata}'."
+
+
+def test_upload_image_negative_400_invalid_pet_id_type(api_key_header):
     """
-    [Negative] Test case for boundary testing with invalid data types.
+    [Negative] 400/404/405 Invalid input: `petId` type mismatch (string instead of int64).
+    Petstore API typically returns 404 Not Found for non-integer path parameters
+    when an integer is expected, as the routing fails before handler execution.
     """
-    # First, create a pet to get a valid petId
-    pet_data = {
-        "category": {"id": 1, "name": "Dogs"},
-        "name": "Buddy",
-        "photoUrls": ["http://example.com/buddy.jpg"],
-        "tags": [{"id": 1, "name": "cute"}],
-        "status": "available"
-    }
-    create_pet_response = requests.post(f"{BASE_URL}/pet", json=pet_data)
-    assert create_pet_response.status_code == 200
-    pet_id = create_pet_response.json().get("id")
-    assert pet_id is not None
+    invalid_pet_id = "non-numeric-id"  # Expecting integer (int64), sending string
+    endpoint = f"/pet/{invalid_pet_id}/uploadImage"
+    url = f"{BASE_URL}{endpoint}"
 
-    # Test with invalid type for petId (string instead of integer)
-    files = {'file': ('test_image.jpg', b'dummy content', 'image/jpeg')}
-    data = {'additionalMetadata': 'This is a test image'}
-    headers = {
-        "api_key": API_KEY
-    }
+    files = {'file': ('test.jpg', b'dummy content', 'image/jpeg')}
+    data = {'additionalMetadata': 'some metadata'}
+    headers = api_key_header
 
-    response_invalid_pet_id = requests.post(
-        f"{BASE_URL}/pet/invalid_id/uploadImage",
-        files=files,
-        data=data,
-        headers=headers
-    )
-    assert response_invalid_pet_id.status_code in [400, 405]
+    print(f"\nExecuting negative test (invalid pet ID type) for URL: {url}")
+    response = requests.post(url, headers=headers, files=files, data=data)
 
-    # Test with invalid type for additionalMetadata (integer instead of string)
-    files = {'file': ('test_image.jpg', b'dummy content', 'image/jpeg')}
-    data_invalid_metadata = {'additionalMetadata': 12345}
-    headers = {
-        "api_key": API_KEY
-    }
-
-    response_invalid_metadata = requests.post(
-        f"{BASE_URL}/pet/{pet_id}/uploadImage",
-        files=files,
-        data=data_invalid_metadata,
-        headers=headers
-    )
-    assert response_invalid_metadata.status_code in [400, 405]
-
-    # Test with empty string for additionalMetadata (should be valid but can be tested)
-    files = {'file': ('test_image.jpg', b'dummy content', 'image/jpeg')}
-    data_empty_metadata = {'additionalMetadata': ''}
-    headers = {
-        "api_key": API_KEY
-    }
-
-    response_empty_metadata = requests.post(
-        f"{BASE_URL}/pet/{pet_id}/uploadImage",
-        files=files,
-        data=data_empty_metadata,
-        headers=headers
-    )
-    assert response_empty_metadata.status_code == 200 # Assuming empty string is valid
-
-    # Clean up the created pet
-    delete_response = requests.delete(f"{BASE_URL}/pet/{pet_id}", headers=headers)
-    assert delete_response.status_code == 200
+    # For petstore.swagger.io, a string petId typically results in 404 (Not Found)
+    # because the routing regex for {petId} (int) doesn't match.
+    # If the router was more forgiving and passed it to the handler, a 400 (Bad Request)
+    # would be expected from type validation. 405 (Method Not Allowed) is also possible
+    # if the route exists but not for POST, which is less likely here.
+    assert response.status_code in [400, 404], \
+        f"Expected status code 400 or 404, but got {response.status_code}. Response: {response.text}"
+    response_json = response.json()
+    assert isinstance(response_json, dict)
+    assert "message" in response_json
 
 
-def test_upload_image_security_unauthorized_missing_auth():
+def test_upload_image_negative_400_empty_metadata_and_file(pet_id, api_key_header):
     """
-    [Security] Test case for unauthorized access by missing authentication headers.
+    [Negative] 200 (boundary testing): Sending empty string for metadata and an empty file.
+    The OpenAPI schema marks `additionalMetadata` and `file` as optional.
+    Therefore, the API should generally accept empty values and return 200 OK,
+    unless specific server-side validation rules are in place for minimum content.
+    This test verifies the API's behavior for such boundary conditions.
     """
-    # First, create a pet to get a valid petId
-    pet_data = {
-        "category": {"id": 1, "name": "Dogs"},
-        "name": "Buddy",
-        "photoUrls": ["http://example.com/buddy.jpg"],
-        "tags": [{"id": 1, "name": "cute"}],
-        "status": "available"
-    }
-    create_pet_response = requests.post(f"{BASE_URL}/pet", json=pet_data)
-    assert create_pet_response.status_code == 200
-    pet_id = create_pet_response.json().get("id")
-    assert pet_id is not None
+    endpoint = f"/pet/{pet_id}/uploadImage"
+    url = f"{BASE_URL}{endpoint}"
 
-    # Prepare the image file
-    image_file_path = "test_image.jpg"
-    try:
-        with open(image_file_path, "wb") as f:
-            f.write(b"This is a dummy image file content.")
-    except IOError:
-        pytest.skip(f"Could not create dummy image file at {image_file_path}. Skipping test.")
+    empty_additional_metadata = ""
+    empty_file_content = b""  # An empty file
+    empty_file_name = "empty_file.txt"
+    empty_file_mimetype = "text/plain"
 
-    files = {'file': (image_file_path, open(image_file_path, 'rb'), 'image/jpeg')}
-    data = {'additionalMetadata': 'This is a test image'}
+    files = {'file': (empty_file_name, empty_file_content, empty_file_mimetype)}
+    data = {'additionalMetadata': empty_additional_metadata}
+    headers = api_key_header
 
-    # Missing "api_key" header
-    response = requests.post(
-        f"{BASE_URL}/pet/{pet_id}/uploadImage",
-        files=files,
-        data=data,
-        headers={}  # Empty headers
-    )
+    print(f"\nExecuting boundary test (empty metadata and file) for URL: {url}")
+    response = requests.post(url, headers=headers, files=files, data=data)
 
-    # The expected behavior for missing authentication in Petstore is often 401 or 403
-    assert response.status_code in [401, 403]
+    # Given that `additionalMetadata` and `file` are optional, 200 OK is expected.
+    # The Petstore API handles this gracefully, treating them as valid but empty inputs.
+    assert response.status_code == 200, \
+        f"Expected status code 200, but got {response.status_code}. Response: {response.text}"
+    response_json = response.json()
+    assert isinstance(response_json, dict)
+    assert response_json["code"] == 200
+    assert "uploaded" in response_json["message"]
+    assert empty_file_name in response_json["message"]
 
-    # Clean up the created pet (if the unauthorized request didn't create it implicitly)
-    # Attempt cleanup with a valid key just in case
-    headers_for_cleanup = {
-        "api_key": API_KEY
-    }
-    delete_response = requests.delete(f"{BASE_URL}/pet/{pet_id}", headers=headers_for_cleanup)
-    assert delete_response.status_code == 200
 
-def test_upload_image_security_unauthorized_invalid_auth():
+def test_upload_image_security_401_missing_authentication(pet_id):
     """
-    [Security] Test case for unauthorized access by providing an invalid authentication token.
+    [Security] 401/403 Unauthorized: Simulate missing authentication headers.
+    The endpoint requires 'petstore_auth'. Omitting the required 'api_key'
+    header should result in an authorization error.
     """
-    # First, create a pet to get a valid petId
-    pet_data = {
-        "category": {"id": 1, "name": "Dogs"},
-        "name": "Buddy",
-        "photoUrls": ["http://example.com/buddy.jpg"],
-        "tags": [{"id": 1, "name": "cute"}],
-        "status": "available"
-    }
-    create_pet_response = requests.post(f"{BASE_URL}/pet", json=pet_data)
-    assert create_pet_response.status_code == 200
-    pet_id = create_pet_response.json().get("id")
-    assert pet_id is not None
+    endpoint = f"/pet/{pet_id}/uploadImage"
+    url = f"{BASE_URL}{endpoint}"
 
-    # Prepare the image file
-    image_file_path = "test_image.jpg"
-    try:
-        with open(image_file_path, "wb") as f:
-            f.write(b"This is a dummy image file content.")
-    except IOError:
-        pytest.skip(f"Could not create dummy image file at {image_file_path}. Skipping test.")
+    files = {'file': ('missing_auth.jpg', b'image content', 'image/jpeg')}
+    data = {'additionalMetadata': 'metadata without auth'}
 
-    files = {'file': (image_file_path, open(image_file_path, 'rb'), 'image/jpeg')}
-    data = {'additionalMetadata': 'This is a test image'}
+    # Intentionally do not send the 'api_key' header
+    print(f"\nExecuting security test (missing authentication) for URL: {url}")
+    response = requests.post(url, files=files, data=data)
 
-    # Providing an invalid API key
-    headers = {
-        "api_key": "invalid-api-key"
-    }
+    # Petstore API typically returns 401 Unauthorized when the 'api_key'
+    # header is completely absent, indicating authentication is required.
+    # 403 Forbidden might be returned if an invalid, but present, auth token
+    # is provided, or if the token lacks necessary scopes.
+    assert response.status_code in [401, 403], \
+        f"Expected status code 401 or 403, but got {response.status_code}. Response: {response.text}"
+    response_json = response.json()
+    assert isinstance(response_json, dict)
+    assert "message" in response_json
+    assert any(msg in response_json["message"].lower() for msg in ["unauthorized", "authentication required", "access denied", "invalid token"])
 
-    response = requests.post(
-        f"{BASE_URL}/pet/{pet_id}/uploadImage",
-        files=files,
-        data=data,
-        headers=headers
-    )
 
-    # The expected behavior for invalid authentication in Petstore is often 401 or 403
-    assert response.status_code in [401, 403]
+def test_upload_image_security_401_invalid_authentication(pet_id, invalid_api_key_header):
+    """
+    [Security] 401/403 Unauthorized: Simulate invalid authentication headers.
+    Providing an 'api_key' header with an invalid or unrecognized value
+    should result in an authorization error.
+    """
+    endpoint = f"/pet/{pet_id}/uploadImage"
+    url = f"{BASE_URL}{endpoint}"
 
-    # Clean up the created pet (if the unauthorized request didn't create it implicitly)
-    # Attempt cleanup with a valid key just in case
-    headers_for_cleanup = {
-        "api_key": API_KEY
-    }
-    delete_response = requests.delete(f"{BASE_URL}/pet/{pet_id}", headers=headers_for_cleanup)
-    assert delete_response.status_code == 200
+    files = {'file': ('invalid_auth.jpg', b'image content', 'image/jpeg')}
+    data = {'additionalMetadata': 'metadata with invalid auth'}
+
+    headers = invalid_api_key_header  # Use the fixture providing an invalid API key
+
+    print(f"\nExecuting security test (invalid authentication) for URL: {url}")
+    response = requests.post(url, headers=headers, files=files, data=data)
+
+    # Similar to missing authentication, an invalid key should also result
+    # in 401 Unauthorized or 403 Forbidden, depending on server implementation.
+    assert response.status_code in [401, 403], \
+        f"Expected status code 401 or 403, but got {response.status_code}. Response: {response.text}"
+    response_json = response.json()
+    assert isinstance(response_json, dict)
+    assert "message" in response_json
+    assert any(msg in response_json["message"].lower() for msg in ["unauthorized", "authentication failed", "invalid key", "access denied", "invalid token"])

@@ -1,166 +1,144 @@
 import pytest
 import requests
+import json
+import uuid
 
 BASE_URL = "https://petstore.swagger.io/v2"
 
-# Define a sample user payload based on the expected schema
-# Assuming the User schema in OpenAPI has fields like 'id', 'username', 'firstName', 'lastName', 'email', 'password', 'phone', 'userStatus'
-SAMPLE_USER_PAYLOAD = {
-    "id": 12345,
-    "username": "testuser_pytest",
-    "firstName": "Test",
-    "lastName": "User",
-    "email": "test.user@example.com",
-    "password": "password123",
-    "phone": "123-456-7890",
-    "userStatus": 1
-}
-
-def test_create_user_success():
-    """
-    Tests the successful creation of a user.
-    """
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    response = requests.post(
-        f"{BASE_URL}/user",
-        json=SAMPLE_USER_PAYLOAD,
-        headers=headers
-    )
-    assert response.status_code == 200, f"Expected status code 200, but got {response.status_code}. Response: {response.text}"
-    # Add more assertions here if the response body contains specific details about the created user
-    # For example, if the response returns the created user object:
-    # assert response.json()["username"] == SAMPLE_USER_PAYLOAD["username"]
-
-def test_create_user_missing_required_field():
-    """
-    Tests creating a user with a missing required field (e.g., username).
-    """
-    invalid_payload = SAMPLE_USER_PAYLOAD.copy()
-    del invalid_payload["username"] # Assuming username is a required field
-
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    response = requests.post(
-        f"{BASE_URL}/user",
-        json=invalid_payload,
-        headers=headers
-    )
-    # The expected status code for a bad request might vary depending on the API's error handling.
-    # Common codes are 400 (Bad Request). Let's assume 400 for this test.
-    assert response.status_code == 400, f"Expected status code 400, but got {response.status_code}. Response: {response.text}"
-
-def test_create_user_invalid_data_type():
-    """
-    Tests creating a user with an invalid data type for a field.
-    """
-    invalid_payload = SAMPLE_USER_PAYLOAD.copy()
-    invalid_payload["id"] = "not_an_integer" # Assuming 'id' should be an integer
-
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    response = requests.post(
-        f"{BASE_URL}/user",
-        json=invalid_payload,
-        headers=headers
-    )
-    # Again, the expected status code for invalid data types can vary. Assuming 400.
-    assert response.status_code == 400, f"Expected status code 400, but got {response.status_code}. Response: {response.text}"
-
-def test_create_user_duplicate_username():
-    """
-    Tests creating a user with a username that already exists.
-    This assumes the API will reject duplicate usernames.
-    First, create a user. Then, try to create another with the same username.
-    """
-    # Create the first user
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    first_user_payload = {
-        "id": 67890,
-        "username": "duplicateuser_pytest",
-        "firstName": "Dup",
-        "lastName": "User",
-        "email": "dup.user@example.com",
-        "password": "password456",
+def get_base_user_payload():
+    """Generates a complete and unique user payload."""
+    unique_suffix = uuid.uuid4().hex
+    return {
+        "id": 0, # Often ignored or assigned by server for creation
+        "username": f"testuser_{unique_suffix}",
+        "firstName": "Jane",
+        "lastName": "Doe",
+        "email": f"jane.doe.{unique_suffix}@example.com",
+        "password": "SecurePassword123!",
         "phone": "987-654-3210",
-        "userStatus": 0
+        "userStatus": 1 # Example: 1 for active
     }
-    response_first = requests.post(
-        f"{BASE_URL}/user",
-        json=first_user_payload,
-        headers=headers
-    )
-    assert response_first.status_code == 200, f"Failed to create the first user. Status: {response_first.status_code}, Response: {response_first.text}"
 
-    # Attempt to create a second user with the same username
-    second_user_payload = first_user_payload.copy()
-    second_user_payload["id"] = 11111 # Use a different ID
+class TestCreateUserEndpoint:
 
-    response_second = requests.post(
-        f"{BASE_URL}/user",
-        json=second_user_payload,
-        headers=headers
-    )
-    # Expecting an error code, likely 409 Conflict or 400 Bad Request
-    # Assuming 400 for this example, but 409 is also common for duplicate resource creation
-    assert response_second.status_code == 400, f"Expected status code 400 for duplicate username, but got {response_second.status_code}. Response: {response_second.text}"
+    # 1. [Positive] 200 OK with a perfect, complete payload.
+    def test_create_user_positive_complete_payload(self):
+        url = f"{BASE_URL}/user"
+        payload = get_base_user_payload()
+        
+        response = requests.post(url, json=payload)
+        
+        assert response.status_code == 200, \
+            f"Positive test failed: Expected status code 200, but got {response.status_code}. Response: {response.text}"
+        
+        # Petstore's create user typically returns a generic ApiResponse for success.
+        # Example: {"code": 200, "type": "unknown", "message": "123"} where "123" is an ID.
+        try:
+            response_json = response.json()
+            assert "code" in response_json, "Response JSON missing 'code' field."
+            assert response_json["code"] == 200, \
+                f"Expected response code 200 in JSON, but got {response_json['code']}."
+            assert "type" in response_json, "Response JSON missing 'type' field."
+            # Petstore often returns 'unknown' for type on successful user creation.
+            assert response_json["type"] == "unknown", \
+                f"Expected response type 'unknown', but got {response_json['type']}."
+            assert "message" in response_json, "Response JSON missing 'message' field."
+            assert response_json["message"].isdigit(), \
+                f"Expected 'message' to be a numeric user ID, but got {response_json['message']}."
+        except json.JSONDecodeError:
+            pytest.fail(f"Response is not valid JSON: {response.text}")
 
-    # Clean up the first user if the API supports deletion, or assume it's managed externally
-    # For simplicity in this example, we're not including a delete test or cleanup.
 
-def test_create_user_with_xml_accept_header():
-    """
-    Tests creating a user and requesting an XML response.
-    """
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/xml"
-    }
-    response = requests.post(
-        f"{BASE_URL}/user",
-        json=SAMPLE_USER_PAYLOAD,
-        headers=headers
-    )
-    assert response.status_code == 200, f"Expected status code 200, but got {response.status_code}. Response: {response.text}"
-    assert response.headers['Content-Type'].startswith('application/xml')
-    # Add assertions to check the XML response content if applicable
+    # 2. [Negative] 400/405 Invalid input (missing required fields).
+    # Note: Petstore's /user endpoint is often lenient and might return 200 even for
+    # logically required fields (e.g., username, email, password) if not explicitly
+    # enforced on the server-side. As an SDET/Security Tester, we expect 400/405
+    # for missing critical data to ensure robust validation. This test will
+    # intentionally fail if the API returns 200, highlighting a potential API design flaw.
+    @pytest.mark.parametrize("missing_field", ["username", "email", "password"])
+    def test_create_user_negative_missing_required_fields(self, missing_field):
+        url = f"{BASE_URL}/user"
+        payload = get_base_user_payload()
+        
+        # Remove the specified field
+        payload.pop(missing_field, None)
+        
+        response = requests.post(url, json=payload)
+        
+        assert response.status_code in [400, 405], \
+            f"Negative test failed: Expected status code 400 or 405 for missing '{missing_field}', " \
+            f"but got {response.status_code}. This indicates the API might not enforce " \
+            f"'{missing_field}' as required, a potential validation gap. Response: {response.text}"
+        
+        if response.status_code in [400, 405]:
+            try:
+                response_json = response.json()
+                assert "code" in response_json
+                assert "type" in response_json
+                assert "message" in response_json
+                assert "error" in response_json["type"].lower() or "bad request" in response_json["message"].lower()
+            except json.JSONDecodeError:
+                assert "Error" in response.text or "Bad Request" in response.text or "invalid" in response.text
 
-def test_create_user_with_invalid_content_type():
-    """
-    Tests creating a user with an invalid Content-Type header.
-    """
-    headers = {
-        "Content-Type": "application/xml", # Incorrect content type for sending JSON
-        "Accept": "application/json"
-    }
-    response = requests.post(
-        f"{BASE_URL}/user",
-        json=SAMPLE_USER_PAYLOAD, # Sending JSON data
-        headers=headers
-    )
-    # Typically, an API will return a 415 Unsupported Media Type for an incorrect Content-Type
-    assert response.status_code == 415, f"Expected status code 415, but got {response.status_code}. Response: {response.text}"
 
-def test_create_user_without_json_body():
-    """
-    Tests calling the endpoint without sending a JSON body.
-    """
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    response = requests.post(
-        f"{BASE_URL}/user",
-        headers=headers # No json= argument
-    )
-    # Missing required body should result in a Bad Request (400)
-    assert response.status_code == 400, f"Expected status code 400 for missing body, but got {response.status_code}. Response: {response.text}"
+    # 3. [Negative] 400/405 Boundary testing (e.g., sending an integer when a string is expected, or an empty string).
+    # Similar to missing fields, Petstore's /user endpoint can be lenient, potentially coercing types
+    # or returning 200 for invalid data. This test asserts for 400/405 to highlight
+    # a lack of strict input validation, which is a common security/robustness concern.
+    @pytest.mark.parametrize("field, invalid_value", [
+        ("username", 12345),  # int where string expected
+        ("email", ""),        # empty string, often invalid for email format
+        ("password", 11111),  # int where string expected
+        ("firstName", ""),    # empty string for non-required string
+        ("lastName", 98765),  # int where string expected
+        ("userStatus", "invalid_status"), # string where int expected
+        ("id", "not_an_int")  # string where int expected
+    ])
+    def test_create_user_negative_boundary_invalid_data_types_and_empty_strings(self, field, invalid_value):
+        url = f"{BASE_URL}/user"
+        payload = get_base_user_payload()
+        
+        payload[field] = invalid_value
+        
+        response = requests.post(url, json=payload)
+        
+        assert response.status_code in [400, 405], \
+            f"Negative test failed: Expected status code 400 or 405 for invalid input for '{field}' (value: '{invalid_value}'), " \
+            f"but got {response.status_code}. This indicates the API might not strictly validate " \
+            f"data types/formats. Response: {response.text}"
+        
+        if response.status_code in [400, 405]:
+            try:
+                response_json = response.json()
+                assert "code" in response_json
+                assert "type" in response_json
+                assert "message" in response_json
+            except json.JSONDecodeError:
+                assert "Error" in response.text or "Bad Request" in response.text or "invalid" in response.text
+
+
+    # 4. [Security] 401/403 Unauthorized (simulate missing or invalid authentication headers if applicable).
+    # The OpenAPI description states: "This can only be done by the logged in user."
+    # This test simulates an unauthenticated request. If the API returns 200, it's a security finding,
+    # as user creation would be possible without meeting the documented security requirement.
+    def test_create_user_security_unauthorized(self):
+        url = f"{BASE_URL}/user"
+        payload = get_base_user_payload()
+        
+        # No authentication headers are sent, simulating an unauthenticated request.
+        response = requests.post(url, json=payload)
+        
+        assert response.status_code in [401, 403], \
+            f"Security test failed: Expected status code 401 or 403 for an unauthenticated request, " \
+            f"but got {response.status_code}. This potentially indicates a security bypass, " \
+            f"allowing user creation without a 'logged in user' as specified. Response: {response.text}"
+
+        if response.status_code in [401, 403]:
+            try:
+                response_json = response.json()
+                assert "code" in response_json
+                assert "type" in response_json
+                assert "message" in response_json
+                assert "unauthorized" in response_json["message"].lower() or "forbidden" in response_json["message"].lower()
+            except json.JSONDecodeError:
+                assert "Unauthorized" in response.text or "Forbidden" in response.text

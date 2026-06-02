@@ -1,0 +1,33 @@
+name: Enterprise API Test Suite
+
+# 1. When should this pipeline run?
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+# 2. What computer should we rent, and what should it do?
+jobs:
+  api-testing:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: 📦 Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: 🚀 Run AI Test Framework
+      env:
+        # This takes the encrypted secret from GitHub and gives it to Python!
+        API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        pytest tests/ --alluredir=allure-results

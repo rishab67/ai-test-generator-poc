@@ -1,264 +1,241 @@
-import pytest
 import requests
-import json
+import pytest
+import uuid
+import random
 
 BASE_URL = "https://petstore.swagger.io/v2"
+PET_ENDPOINT = f"{BASE_URL}/pet"
+AUTH_HEADERS = {"api_key": "special-key", "Content-Type": "application/json", "Accept": "application/json"}
+UNAUTH_HEADERS = {"Content-Type": "application/json", "Accept": "application/json"} # Headers without API key
+INVALID_AUTH_HEADERS = {"api_key": "invalid-key", "Content-Type": "application/json", "Accept": "application/json"}
 
-# --- Helper Functions ---
-
-def create_valid_pet_payload():
+@pytest.fixture
+def pet_payload_base():
+    """Fixture to generate a basic pet payload with required fields."""
     return {
-        "id": 9999,
-        "category": {
-            "id": 1,
-            "name": "Dogs"
-        },
-        "name": "Buddy",
+        "id": random.randint(100000, 999999),
+        "name": f"TestPet-{uuid.uuid4()}",
         "photoUrls": [
-            "http://example.com/buddy.jpg"
-        ],
-        "tags": [
-            {
-                "id": 10,
-                "name": "friendly"
-            }
+            f"http://example.com/photo/{uuid.uuid4()}.jpg"
         ],
         "status": "available"
     }
 
-def get_pet_schema():
-    # In a real scenario, you'd fetch this from the OpenAPI spec.
-    # For this example, we'll define a simplified schema structure based on the provided OpenAPI snippet.
-    return {
-        "type": "object",
-        "properties": {
-            "id": {"type": "integer", "format": "int64"},
-            "category": {
-                "type": "object",
-                "properties": {
-                    "id": {"type": "integer", "format": "int64"},
-                    "name": {"type": "string"}
-                }
-            },
-            "name": {"type": "string"},
-            "photoUrls": {
-                "type": "array",
-                "items": {"type": "string"}
-            },
-            "tags": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "integer", "format": "int64"},
-                        "name": {"type": "string"}
-                    }
-                }
-            },
-            "status": {"type": "string", "enum": ["available", "pending", "sold"]}
+@pytest.fixture
+def pet_payload_complete(pet_payload_base):
+    """Fixture to generate a complete pet payload with all optional fields."""
+    payload = pet_payload_base.copy()
+    payload.update({
+        "category": {
+            "id": random.randint(1, 100),
+            "name": f"Category-{uuid.uuid4().hex[:8]}"
         },
-        "required": ["name", "photoUrls"]
-    }
-
-# --- Fixtures ---
+        "tags": [
+            {
+                "id": random.randint(1, 100),
+                "name": f"Tag-{uuid.uuid4().hex[:8]}"
+            }
+        ]
+    })
+    return payload
 
 @pytest.fixture
-def api_client():
-    return requests
+def created_pet_id(pet_payload_complete):
+    """Fixture to create a pet and return its ID for update/delete tests. Includes teardown."""
+    post_response = requests.post(PET_ENDPOINT, json=pet_payload_complete, headers=AUTH_HEADERS)
+    assert post_response.status_code == 200
+    pet_id = post_response.json().get("id")
+    assert pet_id is not None
+    yield pet_id
+    # Teardown: Attempt to delete the created pet
+    requests.delete(f"{PET_ENDPOINT}/{pet_id}", headers=AUTH_HEADERS)
 
-@pytest.fixture(scope="module")
-def auth_headers():
-    # This token is for demonstration purposes and may not work.
-    # In a real test, this would be obtained via an OAuth flow or a mock server.
-    return {"api_key": "special-key"}
-
-@pytest.fixture(scope="module")
-def invalid_auth_headers():
-    return {"api_key": "invalid-key"}
-
-@pytest.fixture(scope="module")
-def missing_auth_headers():
-    return {}
 
 # --- Test Cases ---
 
-class TestPetAPI:
+# 1. [Positive] 200 OK with a perfect, complete payload.
 
-    # 1. [Positive] 200 OK with a perfect, complete payload.
-    def test_add_pet_success(self, api_client, auth_headers):
-        payload = create_valid_pet_payload()
-        headers = {
-            "Content-Type": "application/json",
-            **auth_headers
-        }
-        response = api_client.post(f"{BASE_URL}/pet", json=payload, headers=headers)
+def test_post_pet_positive_complete_payload(pet_payload_complete):
+    """
+    POST /pet: Test adding a new pet with a complete, valid payload, expecting 200 OK.
+    """
+    response = requests.post(PET_ENDPOINT, json=pet_payload_complete, headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    response_data = response.json()
 
-        assert response.status_code == 200
-        response_data = response.json()
-        assert response_data == payload
-        assert "id" in response_data
-        assert response_data["id"] == payload["id"]
-        assert "name" in response_data
-        assert response_data["name"] == payload["name"]
-        assert "status" in response_data
-        assert response_data["status"] == payload["status"]
+    assert isinstance(response_data, dict)
+    assert response_data["id"] == pet_payload_complete["id"]
+    assert response_data["name"] == pet_payload_complete["name"]
+    assert response_data["status"] == pet_payload_complete["status"]
+    assert response_data["category"]["id"] == pet_payload_complete["category"]["id"]
+    assert response_data["category"]["name"] == pet_payload_complete["category"]["name"]
+    assert response_data["photoUrls"] == pet_payload_complete["photoUrls"]
+    assert response_data["tags"][0]["id"] == pet_payload_complete["tags"][0]["id"]
+    assert response_data["tags"][0]["name"] == pet_payload_complete["tags"][0]["name"]
 
-    # 2. [Negative] 400/405 Invalid input (missing required fields).
-    @pytest.mark.parametrize(
-        "missing_field",
-        [
-            "name",
-            "photoUrls"
-        ]
-    )
-    def test_add_pet_missing_required_field(self, api_client, auth_headers, missing_field):
-        payload = create_valid_pet_payload()
-        del payload[missing_field]
+def test_put_pet_positive_complete_payload(pet_payload_complete):
+    """
+    PUT /pet: Test updating an existing pet with a complete, valid payload, expecting 200 OK.
+    """
+    # First, create a pet to ensure it exists for the update
+    post_response = requests.post(PET_ENDPOINT, json=pet_payload_complete, headers=AUTH_HEADERS)
+    assert post_response.status_code == 200
+    created_pet_id = post_response.json().get("id")
+    assert created_pet_id is not None
 
-        headers = {
-            "Content-Type": "application/json",
-            **auth_headers
-        }
-        response = api_client.post(f"{BASE_URL}/pet", json=payload, headers=headers)
+    # Prepare an updated payload
+    updated_name = f"UpdatedPet-{uuid.uuid4()}"
+    pet_payload_complete["id"] = created_pet_id  # Ensure the ID matches the created pet
+    pet_payload_complete["name"] = updated_name
+    pet_payload_complete["status"] = "sold"
+    pet_payload_complete["category"]["name"] = f"Category-Updated-{uuid.uuid4().hex[:8]}"
 
-        # The API spec indicates 405 for invalid input.
-        assert response.status_code == 405
-        response_data = response.json()
-        assert "code" in response_data
-        assert "message" in response_data
-        assert missing_field in response_data["message"]
+    put_response = requests.put(PET_ENDPOINT, json=pet_payload_complete, headers=AUTH_HEADERS)
+    assert put_response.status_code == 200
+    response_data = put_response.json()
 
-    # 3. [Negative] 400/405 Boundary testing (e.g., sending an integer when a string is expected, or an empty string).
-    @pytest.mark.parametrize(
-        "field, invalid_value",
-        [
-            ("name", 123),  # Integer instead of string
-            ("name", ""),   # Empty string (depending on API implementation, might be valid or invalid)
-            ("status", "invalid_status"), # Invalid enum value
-            ("id", "abc") # String instead of integer
-        ]
-    )
-    def test_add_pet_invalid_data_type_or_value(self, api_client, auth_headers, field, invalid_value):
-        payload = create_valid_pet_payload()
-        if field == "photoUrls":
-            payload[field] = [123] # Array of integers instead of strings
-        elif field == "category":
-            payload[field] = "not_an_object"
-        elif field == "tags":
-            payload[field] = [{"name": "tag1", "extra_field": "value"}]
-        else:
-            payload[field] = invalid_value
+    assert isinstance(response_data, dict)
+    assert response_data["id"] == created_pet_id
+    assert response_data["name"] == updated_name
+    assert response_data["status"] == "sold"
+    assert response_data["category"]["name"] == pet_payload_complete["category"]["name"]
 
-        headers = {
-            "Content-Type": "application/json",
-            **auth_headers
-        }
-        response = api_client.post(f"{BASE_URL}/pet", json=payload, headers=headers)
+    # Clean up the created pet
+    requests.delete(f"{PET_ENDPOINT}/{created_pet_id}", headers=AUTH_HEADERS)
 
-        # The API spec indicates 405 for validation exceptions.
-        assert response.status_code == 405
-        response_data = response.json()
-        assert "code" in response_data
-        assert "message" in response_data
-        assert field in response_data["message"]
 
-    # 4. [Security] 401/403 Unauthorized (simulate missing or invalid authentication headers if applicable).
-    @pytest.mark.parametrize(
-        "headers_to_use",
-        [
-            "invalid_auth_headers",
-            "missing_auth_headers"
-        ]
-    )
-    def test_add_pet_unauthorized(self, api_client, request, headers_to_use):
-        payload = create_valid_pet_payload()
-        auth_headers_fixture = request.getfixturevalue(headers_to_use)
-        headers = {
-            "Content-Type": "application/json",
-            **auth_headers_fixture
-        }
-        response = api_client.post(f"{BASE_URL}/pet", json=payload, headers=headers)
+# 2. [Negative] 400/405 Invalid input (missing required fields).
 
-        # The OpenAPI spec doesn't explicitly define 401/403 for this endpoint,
-        # but it shows a security scheme 'petstore_auth'.
-        # Typically, missing or invalid auth leads to 401 or 403.
-        # We'll assert for a common unauthorized status code.
-        assert response.status_code in [401, 403]
-        response_data = response.json()
-        assert "code" in response_data
-        assert "message" in response_data
-        assert "authentication" in response_data["message"].lower() or "unauthorized" in response_data["message"].lower()
+@pytest.mark.parametrize("missing_field", ["name", "photoUrls"])
+def test_post_pet_negative_missing_required_fields(pet_payload_base, missing_field):
+    """
+    POST /pet: Test adding a pet with missing required fields (name, photoUrls), expecting 400/405.
+    """
+    payload = pet_payload_base.copy()
+    del payload[missing_field]
+    response = requests.post(PET_ENDPOINT, json=payload, headers=AUTH_HEADERS)
+    # OpenAPI schema states 405 for 'Invalid input' for POST. 400 is also common for bad requests.
+    assert response.status_code in [400, 405]
 
-    # Test for PUT operation - update an existing pet
-    def test_update_pet_success(self, api_client, auth_headers):
-        # First, add a pet to ensure it exists
-        initial_payload = create_valid_pet_payload()
-        headers = {
-            "Content-Type": "application/json",
-            **auth_headers
-        }
-        post_response = api_client.post(f"{BASE_URL}/pet", json=initial_payload, headers=headers)
-        assert post_response.status_code == 200
+@pytest.mark.parametrize("missing_field", ["id", "name", "photoUrls"])
+def test_put_pet_negative_missing_required_fields(pet_payload_base, created_pet_id, missing_field):
+    """
+    PUT /pet: Test updating a pet with missing required fields (id, name, photoUrls), expecting 400/405.
+    """
+    payload = pet_payload_base.copy()
+    payload["id"] = created_pet_id  # Ensure a valid ID exists for the update context
+    del payload[missing_field]
+    response = requests.put(PET_ENDPOINT, json=payload, headers=AUTH_HEADERS)
+    # OpenAPI schema states 400 for 'Invalid ID supplied', 405 for 'Validation exception'.
+    assert response.status_code in [400, 405]
 
-        # Now, update the pet
-        updated_payload = initial_payload.copy()
-        updated_payload["name"] = "BuddyUpdated"
-        updated_payload["status"] = "sold"
 
-        put_response = api_client.put(f"{BASE_URL}/pet", json=updated_payload, headers=headers)
-        assert put_response.status_code == 200
-        response_data = put_response.json()
-        assert response_data == updated_payload
-        assert "name" in response_data
-        assert response_data["name"] == "BuddyUpdated"
-        assert "status" in response_data
-        assert response_data["status"] == "sold"
+# 3. [Negative] 400/405 Boundary testing (e.g., sending an integer when a string is expected, or an empty string).
 
-    def test_update_pet_not_found(self, api_client, auth_headers):
-        payload = create_valid_pet_payload()
-        payload["id"] = -1 # Non-existent ID
-        payload["name"] = "NonExistentPet"
+@pytest.mark.parametrize("field, value", [
+    ("name", 12345),                       # name as integer (expected string)
+    ("name", ""),                          # name as empty string (required)
+    ("photoUrls", "not_an_array"),         # photoUrls as string (expected array of strings)
+    ("photoUrls", []),                     # photoUrls as empty array (usually requires at least one URL)
+    ("status", "invalid_enum_status"),     # status with invalid enum value
+    ("id", "not_an_int"),                  # id as string (expected integer)
+    ("id", -1)                             # id as negative integer (usually invalid)
+])
+def test_post_pet_negative_boundary_invalid_types_and_values(pet_payload_base, field, value):
+    """
+    POST /pet: Test adding a pet with invalid data types or boundary values, expecting 400/405.
+    """
+    payload = pet_payload_base.copy()
+    if field in payload:
+        payload[field] = value
+    else: # For new fields like category or tags, if they were to be tested for type
+        payload[field] = value
+    response = requests.post(PET_ENDPOINT, json=payload, headers=AUTH_HEADERS)
+    assert response.status_code in [400, 405] # OpenAPI states 405 for 'Invalid input'
 
-        headers = {
-            "Content-Type": "application/json",
-            **auth_headers
-        }
-        response = api_client.put(f"{BASE_URL}/pet", json=payload, headers=headers)
+@pytest.mark.parametrize("field, value, expected_status_codes", [
+    ("id", "not_an_int", [400, 405]),           # id as string (expected integer)
+    ("id", 0, [400, 404]),                      # id as 0 (usually not a valid ID, could lead to 404 or 400)
+    ("id", -1, [400, 404]),                     # id as negative (usually not a valid ID, could lead to 404 or 400)
+    ("name", 12345, [400, 405]),                # name as integer (expected string)
+    ("name", "", [400, 405]),                   # name as empty string (required)
+    ("photoUrls", "not_an_array", [400, 405]),  # photoUrls as string (expected array)
+    ("photoUrls", [], [400, 405]),              # photoUrls as empty array
+    ("status", "invalid_enum_status", [400, 405]) # status with invalid enum value
+])
+def test_put_pet_negative_boundary_invalid_types_and_values(pet_payload_base, created_pet_id, field, value, expected_status_codes):
+    """
+    PUT /pet: Test updating a pet with invalid data types or boundary values, expecting 400/405/404.
+    """
+    payload = pet_payload_base.copy()
+    payload["id"] = created_pet_id # Start with a valid base ID
 
-        assert response.status_code == 404
-        response_data = response.json()
-        assert "code" in response_data
-        assert "message" in response_data
-        assert str(payload["id"]) in response_data["message"] # ID might be in message
+    payload[field] = value # Apply the boundary test value to the specified field
+    
+    response = requests.put(PET_ENDPOINT, json=payload, headers=AUTH_HEADERS)
+    assert response.status_code in expected_status_codes # Specific codes per OpenAPI for PUT negatives
 
-    def test_update_pet_invalid_id(self, api_client, auth_headers):
-        payload = create_valid_pet_payload()
-        payload["id"] = "invalid_id_type" # Invalid type for ID
-        payload["name"] = "InvalidIdPet"
+def test_put_pet_negative_non_existent_id(pet_payload_base):
+    """
+    PUT /pet: Test updating a pet with a non-existent ID, expecting 404.
+    """
+    payload = pet_payload_base.copy()
+    payload["id"] = 999999999999999  # A very large, highly likely non-existent ID
+    response = requests.put(PET_ENDPOINT, json=payload, headers=AUTH_HEADERS)
+    assert response.status_code == 404 # OpenAPI states 404 for 'Pet not found'
 
-        headers = {
-            "Content-Type": "application/json",
-            **auth_headers
-        }
-        response = api_client.put(f"{BASE_URL}/pet", json=payload, headers=headers)
 
-        assert response.status_code == 400
-        response_data = response.json()
-        assert "code" in response_data
-        assert "message" in response_data
-        assert "Invalid ID supplied" in response_data["message"]
+# 4. [Security] 401/403 Unauthorized (simulate missing or invalid authentication headers if applicable).
 
-    def test_update_pet_unauthorized(self, api_client, request, headers_to_use):
-        payload = create_valid_pet_payload()
-        auth_headers_fixture = request.getfixturevalue(headers_to_use)
-        headers = {
-            "Content-Type": "application/json",
-            **auth_headers_fixture
-        }
-        response = api_client.put(f"{BASE_URL}/pet", json=payload, headers=headers)
+def test_post_pet_security_unauthorized_no_headers(pet_payload_complete):
+    """
+    POST /pet: Test adding a pet without any authentication headers, expecting 401/403.
+    """
+    response = requests.post(PET_ENDPOINT, json=pet_payload_complete, headers=UNAUTH_HEADERS)
+    assert response.status_code in [401, 403]
 
-        assert response.status_code in [401, 403]
-        response_data = response.json()
-        assert "code" in response_data
-        assert "message" in response_data
-        assert "authentication" in response_data["message"].lower() or "unauthorized" in response_data["message"].lower()
+def test_post_pet_security_unauthorized_invalid_api_key(pet_payload_complete):
+    """
+    POST /pet: Test adding a pet with an invalid API key, expecting 401/403.
+    """
+    response = requests.post(PET_ENDPOINT, json=pet_payload_complete, headers=INVALID_AUTH_HEADERS)
+    assert response.status_code in [401, 403]
+
+def test_put_pet_security_unauthorized_no_headers(pet_payload_base):
+    """
+    PUT /pet: Test updating a pet without any authentication headers, expecting 401/403.
+    """
+    # Create a pet first to have a valid ID to attempt an update on
+    post_response = requests.post(PET_ENDPOINT, json=pet_payload_base, headers=AUTH_HEADERS)
+    assert post_response.status_code == 200
+    created_pet_id = post_response.json().get("id")
+    assert created_pet_id is not None
+
+    pet_payload_base["id"] = created_pet_id # Use the created pet's ID
+    pet_payload_base["name"] = f"AttemptedUpdate-{uuid.uuid4()}" # Attempt to modify name
+
+    response = requests.put(PET_ENDPOINT, json=pet_payload_base, headers=UNAUTH_HEADERS)
+    assert response.status_code in [401, 403]
+
+    # Clean up the created pet
+    requests.delete(f"{PET_ENDPOINT}/{created_pet_id}", headers=AUTH_HEADERS)
+
+
+def test_put_pet_security_unauthorized_invalid_api_key(pet_payload_base):
+    """
+    PUT /pet: Test updating a pet with an invalid API key, expecting 401/403.
+    """
+    # Create a pet first to have a valid ID to attempt an update on
+    post_response = requests.post(PET_ENDPOINT, json=pet_payload_base, headers=AUTH_HEADERS)
+    assert post_response.status_code == 200
+    created_pet_id = post_response.json().get("id")
+    assert created_pet_id is not None
+
+    pet_payload_base["id"] = created_pet_id # Use the created pet's ID
+    pet_payload_base["name"] = f"AttemptedUpdate-{uuid.uuid4()}" # Attempt to modify name
+
+    response = requests.put(PET_ENDPOINT, json=pet_payload_base, headers=INVALID_AUTH_HEADERS)
+    assert response.status_code in [401, 403]
+
+    # Clean up the created pet
+    requests.delete(f"{PET_ENDPOINT}/{created_pet_id}", headers=AUTH_HEADERS)
