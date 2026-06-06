@@ -6,3 +6,7 @@ pytest-html==4.1.1
 allure-pytest==2.13.5
 playwright
 pytest-playwright
+google-genai
+playwright
+pytest-playwright
+locust

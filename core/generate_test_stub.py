@@ -26,7 +26,7 @@ def create_test_file():
     clean_code = generated_code.replace("```python", "").replace("```", "").strip()
 
     # 5. Define where to save it
-    file_name = "test_generated_api.py"
+    file_name = "../tests/test_generated_api.py"
 
     print(f"Writing test to {file_name}...")
 
