@@ -1,2 +1,0 @@
-
-Executing boundary test (empty metadata and file) for URL: https://petstore.swagger.io/v2/pet/9223372036854775807/uploadImage

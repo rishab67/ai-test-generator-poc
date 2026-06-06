@@ -1,4 +1,0 @@
-
-Executing security test (invalid authentication) for URL: https://petstore.swagger.io/v2/pet/9223372036854775238/uploadImage
-Attempting to delete pet after tests: https://petstore.swagger.io/v2/pet/9223372036854775238
-Successfully deleted pet with ID: 9223372036854775238

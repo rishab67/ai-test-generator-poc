@@ -1,2 +1,0 @@
-
-Executing security test (missing authentication) for URL: https://petstore.swagger.io/v2/pet/9223372036854775238/uploadImage

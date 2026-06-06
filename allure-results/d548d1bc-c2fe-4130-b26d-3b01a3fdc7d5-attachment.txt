@@ -1,2 +1,0 @@
-
-Executing negative test (invalid pet ID type) for URL: https://petstore.swagger.io/v2/pet/non-numeric-id/uploadImage
