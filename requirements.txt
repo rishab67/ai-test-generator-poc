@@ -1,12 +1,9 @@
 google-genai==0.3.0
 pytest==8.0.0
-requests==2.31.0
-python-dotenv==1.0.1
+pytest-playwright
 pytest-html==4.1.1
 allure-pytest==2.13.5
+requests==2.31.0
+python-dotenv==1.0.1
 playwright
-pytest-playwright
-google-genai
-playwright
-pytest-playwright
 locust
