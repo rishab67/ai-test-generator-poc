@@ -1,9 +1,37 @@
+import os
+import time
 import pytest
 import requests
-import os
+from dotenv import load_dotenv
 from google import genai
 
+# Load environment variables
+load_dotenv()
+
 BASE_URL = "https://petstore.swagger.io/v2"
+
+
+def resilient_ai_call(client, prompt):
+    try:
+        print("\n[🔄 Routing] Attempt 1: Hitting Primary Server (gemini-3.5-flash)...")
+        return client.models.generate_content(model='gemini-3.5-flash', contents=prompt)
+    except Exception as e1:
+        print(f"⚠️ Primary Failed: {e1}")
+
+    try:
+        print("[🔄 Routing] Attempt 2: Hitting Lite Fallback (gemini-3.1-flash-lite)...")
+        return client.models.generate_content(model='gemini-3.1-flash-lite', contents=prompt)
+    except Exception as e2:
+        print(f"⚠️ Lite Fallback Failed: {e2}")
+
+    print("[⏳ Delay] Both nodes congested. Sleeping for 5 seconds...")
+    time.sleep(5)
+
+    try:
+        print("[🔄 Routing] Final Attempt: Retrying Primary Server (gemini-3.5-flash)...")
+        return client.models.generate_content(model='gemini-3.5-flash', contents=prompt)
+    except Exception as e3:
+        raise Exception(f"All AI nodes exhausted. Final Error: {e3}")
 
 
 def test_pet_schema_self_healing():
@@ -18,7 +46,6 @@ def test_pet_schema_self_healing():
 
     try:
         # 2. THE TRAP: We assert a key that DOES NOT EXIST anymore.
-        # We pretend the developer changed the API schema, and our old test is looking for 'pet_category_name'
         assert "pet_category_name" in first_pet, "Key 'pet_category_name' is missing from the response!"
 
     except AssertionError as e:
@@ -26,33 +53,31 @@ def test_pet_schema_self_healing():
         print(f"\n[🚨 TEST FAILED] Assertion Error: {e}")
         print("[🔧 SELF-HEALING] Initiating AI Diagnostics...")
 
-        # Now we ask the AI to fix our broken test
-        api_key = os.environ.get("API_KEY")
+        # --- THE SECURE IMPLEMENTATION ---
+        api_key = os.getenv("API_KEY")
+
+        if not api_key:
+            pytest.fail("❌ SEC EXCEPTION: 'API_KEY' not found in environment. Check your .env file or CI/CD secrets.")
+
         client = genai.Client(api_key=api_key)
+        # ---------------------------------
 
         prompt = f"""
-        You are an AI Self-Healing engine for a Pytest framework.
-        My test just failed. 
+        I am writing an automated test for an API.
+        The test expected the key 'pet_category_name' in this JSON response:
+        {first_pet}
 
-        Here is the error: {e}
-        Here is the actual JSON response I got from the server: {first_pet}
+        But it failed with this error: {e}
 
-        Analyze the actual JSON response. The developer clearly changed the key names.
-        What is the correct key name I should be asserting instead of 'pet_category_name'? 
-        Write a short explanation, and provide the exact Python assertion code I should use to fix my script.
+        Analyze the JSON response. What is the correct key related to category or name that I should use instead?
+        Provide ONLY the exact Python assertion line of code to fix it. 
+        Do not use markdown blocks, just plain text code.
         """
 
-        ai_response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt
-        )
-
-        print("\n" + "=" * 50)
-        print("🤖 AI DIAGNOSTIC & FIX")
-        print("=" * 50)
-        print(ai_response.text)
-        print("=" * 50)
-
-        # We re-raise the error so the test still technically fails in the CI/CD pipeline,
-        # but now the developer has the exact fix printed in the logs!
-        raise e
+        try:
+            # Replaced the raw call with our resilient function
+            ai_response = resilient_ai_call(client, prompt)
+            print(f"[✅ AI SUGGESTED FIX] Update your code to: {ai_response.text.strip()}")
+            pytest.fail("Self-healing diagnosis complete. Please apply the AI fix.")
+        except Exception as ai_error:
+            pytest.fail(f"❌ AI Diagnostics failed: {ai_error}")
